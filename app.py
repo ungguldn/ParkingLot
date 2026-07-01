@@ -1,44 +1,91 @@
 import gradio as gr
 from detector import detect_video
 
+# =====================================
+# Fungsi yang dipanggil Gradio
+# =====================================
+
 def proses(video):
 
-    hasil,kosong,terisi = detect_video(video)
+    if video is None:
+        return None, 0, 0
 
-    return hasil,kosong,terisi
+    hasil_video, kosong, terisi = detect_video(video)
 
-with gr.Blocks(title="Smart Parking Detection") as demo:
+    return hasil_video, kosong, terisi
 
-    gr.Markdown("# 🚗 Smart Parking Detection System")
-    gr.Markdown("Upload video area parkir untuk mendeteksi slot kosong dan terisi.")
+
+# =====================================
+# Tampilan GUI
+# =====================================
+
+with gr.Blocks(
+    title="Smart Parking Detection",
+    theme=gr.themes.Soft()
+) as demo:
+
+    gr.Markdown(
+        """
+        # 🚗 Smart Parking Detection System
+
+        ### Project Computer Vision
+
+        Upload video area parkir kemudian klik **Mulai Deteksi**.
+        Sistem akan menentukan slot parkir **Kosong** dan **Terisi** menggunakan model Machine Learning.
+        """
+    )
 
     with gr.Row():
 
         video_input = gr.Video(
-            label="Upload Video",
-            sources=["upload"]
+            label="📤 Upload Video",
+            sources=["upload"],
+            height=400
         )
 
         video_output = gr.Video(
-            label="Hasil Deteksi"
+            label="🎥 Hasil Deteksi",
+            height=400
         )
 
     with gr.Row():
 
-        kosong = gr.Number(label="🟢 Slot Kosong")
+        jumlah_kosong = gr.Number(
+            label="🟢 Slot Kosong",
+            precision=0
+        )
 
-        terisi = gr.Number(label="🔴 Slot Terisi")
+        jumlah_terisi = gr.Number(
+            label="🔴 Slot Terisi",
+            precision=0
+        )
 
-    tombol = gr.Button("Mulai Deteksi")
+    with gr.Row():
+
+        tombol = gr.Button(
+            "🚀 Mulai Deteksi",
+            variant="primary",
+            size="lg"
+        )
 
     tombol.click(
         fn=proses,
         inputs=video_input,
         outputs=[
             video_output,
-            kosong,
-            terisi
+            jumlah_kosong,
+            jumlah_terisi
         ]
     )
 
-demo.launch()
+    gr.Markdown(
+        """
+        ---
+        Dibuat untuk Project Mata Kuliah Computer Vision
+        """
+    )
+
+demo.launch(
+    share=False,
+    debug=True
+)
