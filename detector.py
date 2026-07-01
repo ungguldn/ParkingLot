@@ -1,90 +1,205 @@
+import os
 import cv2
 import pickle
 import numpy as np
 from skimage.transform import resize
 
+# ===========================
+# Konstanta
+# ===========================
+
 EMPTY = 0
 NOT_EMPTY = 1
 
-with open("model_baru.p", "rb") as f:
+MODEL_PATH = "model_baru.p"
+MASK_PATH = "mask_1920_1080.png"
+
+os.makedirs("output", exist_ok=True)
+
+# ===========================
+# Load Model
+# ===========================
+
+with open(MODEL_PATH, "rb") as f:
     MODEL = pickle.load(f)
 
-MASK_PATH = "mask_1920_1080.png"
+print("[INFO] Model berhasil dimuat.")
+
+# ===========================
+# Load Mask
+# ===========================
 
 mask = cv2.imread(MASK_PATH, cv2.IMREAD_GRAYSCALE)
 
+if mask is None:
+    raise FileNotFoundError(
+        "mask_1920_1080.png tidak ditemukan!"
+    )
+
+connected_components = cv2.connectedComponentsWithStats(
+    mask,
+    4,
+    cv2.CV_32S
+)
+
+# ===========================
+# Ambil Bounding Box Slot
+# ===========================
+
 def get_parking_spots_bboxes(connected_components):
-    """Ubah hasil connected components menjadi list bounding box [x, y, w, h] tiap slot."""
-    (total_labels, label_ids, values, centroid) = connected_components
+
+    (total_labels,
+     label_ids,
+     values,
+     centroid) = connected_components
+
     slots = []
-    for i in range(1, total_labels):  # index 0 = background, dilewati
+
+    for i in range(1, total_labels):
+
         x = int(values[i, cv2.CC_STAT_LEFT])
         y = int(values[i, cv2.CC_STAT_TOP])
         w = int(values[i, cv2.CC_STAT_WIDTH])
         h = int(values[i, cv2.CC_STAT_HEIGHT])
-        slots.append([x, y, w, h])
+
+        slots.append((x, y, w, h))
+
     return slots
 
 
-mask = cv2.imread(MASK_PATH, cv2.IMREAD_GRAYSCALE)
-connected_components = cv2.connectedComponentsWithStats(mask, 4, cv2.CV_32S)
-parking_spots = get_parking_spots_bboxes(connected_components)
+parking_spots = get_parking_spots_bboxes(
+    connected_components
+)
 
-print(f'Jumlah slot parkir terdeteksi dari mask: {len(parking_spots)}')
+print(f"[INFO] Total Slot = {len(parking_spots)}")
 
+# ===========================
+# Prediksi Slot
+# ===========================
 
 def empty_or_not(spot_bgr):
-    # Cegah error jika crop kosong atau tidak valid
-    if spot_bgr is None or spot_bgr.size == 0 or spot_bgr.shape[0] == 0 or spot_bgr.shape[1] == 0:
-        return EMPTY  # anggap kosong untuk menghindari crash
-    try:
-        img_resized = resize(spot_bgr, (15, 15, 3))
-    except Exception:
+
+    if spot_bgr is None:
         return EMPTY
-    flat_data = img_resized.flatten().reshape(1, -1)
-    y_output = MODEL.predict(flat_data)
-    return EMPTY if y_output == 0 else NOT_EMPTY
 
-def proses_frame(frame, spots):
-    annotated = frame.copy()
-    slot_kosong, slot_terisi = 0, 0
+    if spot_bgr.size == 0:
+        return EMPTY
 
-    for x, y, w, h in spots:
-        # Validasi slot: ukuran harus positif dan berada dalam frame
-        if w <= 0 or h <= 0:
-            continue
-        if y + h > frame.shape[0] or x + w > frame.shape[1] or x < 0 or y < 0:
-            continue
-        spot_crop = frame[y:y+h, x:x+w, :]
-        if spot_crop.size == 0:
+    try:
+
+        img = resize(
+            spot_bgr,
+            (15,15,3)
+        )
+
+        flat = img.flatten().reshape(1,-1)
+
+        pred = MODEL.predict(flat)[0]
+
+        return pred
+
+    except Exception:
+
+        return EMPTY
+
+
+# ===========================
+# Proses 1 Frame
+# ===========================
+
+def proses_frame(frame):
+
+    frame_copy = frame.copy()
+
+    kosong = 0
+    terisi = 0
+
+    for (x,y,w,h) in parking_spots:
+
+        if x<0 or y<0:
             continue
 
-        status = empty_or_not(spot_crop)
+        if x+w>frame.shape[1]:
+            continue
+
+        if y+h>frame.shape[0]:
+            continue
+
+        crop = frame[
+            y:y+h,
+            x:x+w
+        ]
+
+        status = empty_or_not(crop)
 
         if status == EMPTY:
-            color = (0, 255, 0)   # Hijau
-            slot_kosong += 1
+
+            color = (0,255,0)
+            kosong += 1
+
         else:
-            color = (0, 0, 255)   # Merah
-            slot_terisi += 1
 
-        cv2.rectangle(annotated, (x, y), (x + w, y + h), color, 2)
+            color = (0,0,255)
+            terisi += 1
 
-    # Tampilkan statistik
-    cv2.rectangle(annotated, (0, 0), (350, 40), (0, 0, 0), -1)
-    cv2.putText(annotated, f'Kosong: {slot_kosong}  Terisi: {slot_terisi}', (10, 27),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.rectangle(
+            frame_copy,
+            (x,y),
+            (x+w,y+h),
+            color,
+            2
+        )
 
-    return annotated, slot_kosong, slot_terisi
+    cv2.rectangle(
+        frame_copy,
+        (0,0),
+        (370,50),
+        (0,0,0),
+        -1
+    )
 
-    
+    cv2.putText(
+        frame_copy,
+        f"Kosong : {kosong}",
+        (10,20),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        (0,255,0),
+        2
+    )
+
+    cv2.putText(
+        frame_copy,
+        f"Terisi : {terisi}",
+        (10,45),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        (0,0,255),
+        2
+    )
+
+    return frame_copy,kosong,terisi
+
+
+# ===========================
+# Deteksi Video
+# ===========================
+
 def detect_video(video_path):
+
+    print("[INFO] Memproses Video...")
 
     cap = cv2.VideoCapture(video_path)
 
     fps = cap.get(cv2.CAP_PROP_FPS)
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    width = int(
+        cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+    )
+
+    height = int(
+        cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+    )
 
     output_path = "output/hasil_deteksi.mp4"
 
@@ -97,8 +212,14 @@ def detect_video(video_path):
         (width,height)
     )
 
-    last_kosong = 0
-    last_terisi = 0
+    STEP = 5
+
+    frame_idx = 0
+
+    last_frame = None
+
+    kosong = 0
+    terisi = 0
 
     while True:
 
@@ -107,17 +228,22 @@ def detect_video(video_path):
         if not ret:
             break
 
-        hasil,kosong,terisi = proses_frame(
-            frame,
-            parking_spots
-        )
+        if frame_idx % STEP == 0 or last_frame is None:
 
-        last_kosong = kosong
-        last_terisi = terisi
+            hasil,kosong,terisi = proses_frame(
+                frame
+            )
 
-        out.write(hasil)
+            last_frame = hasil
+
+        out.write(last_frame)
+
+        frame_idx += 1
 
     cap.release()
+
     out.release()
 
-    return output_path,last_kosong,last_terisi
+    print("[INFO] Selesai.")
+
+    return output_path,kosong,terisi
